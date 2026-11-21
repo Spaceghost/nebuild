@@ -12,7 +12,7 @@ CFLAGS := -DNELIBC_STANDALONE -nostdlib -static -no-pie -fno-pie \
 	-fno-stack-protector -ffreestanding -fno-builtin -fno-sanitize=all \
 	-Wl,-e,_start -Wl,--build-id=none -I$(NELIBC)/include \
 	-DNEBUILD_NELIBC_STAMP=$(NELIBC_STAMP)
-LDFLAGS := -Wl,--whole-archive $(NELIBC_LIB) -Wl,--no-whole-archive -Wl,--strip-all
+LDFLAGS := -Wl,--whole-archive $(NELIBC_LIB) -Wl,--no-whole-archive
 
 .PHONY: all nebuild test install clean
 
