@@ -27,6 +27,20 @@ make test
 sudo make install
 ```
 
+## Build with necc
+
+The standalone `necc` driver can also build nebuild through its public
+full-frontend/native-backend path. This keeps module lookup rooted at this
+repository's `src/` tree and does not change the default Nelua+Zig build:
+
+```sh
+make native NECC=/path/to/necc
+make test-native NECC=/path/to/necc
+```
+
+`NECC` defaults to `necc` on `PATH`. Set `NECC_SYSROOT` when the compiler uses
+a staged SDK. The native executable is `build/nebuild-native` by default.
+
 `PREFIX` defaults to `/usr/local`. Packaging can use `DESTDIR`:
 
 ```sh
