@@ -126,6 +126,18 @@ def main(binary, root):
     assert run(binary, root, jobs=2) == [consumer_recipe]
     assert run(binary, root, jobs=2) == []
 
+    for invalid in ("/", "dot/.", "./out", "../out", "dir/../out", "out/",
+                    "a//out", "//out", "out.nebuild-command"):
+        manifest.write_text(f"build {invalid}\n\tfalse\n")
+        run(binary, root, error=f"invalid path {invalid}")
+    manifest.write_bytes(b"build ok\n\ttrue\x00\n")
+    run(binary, root, error="NUL byte")
+    # A final recipe line may end at EOF, including for an absolute target.
+    absolute = root / ".allowed..name"
+    manifest.write_text(f"build {absolute}\n\tprintf ok > {absolute}")
+    assert len(run(binary, root, str(absolute))) == 1
+    assert not run(binary, root, str(absolute))
+
     print("nebuild clean, incremental, target selection, parallel jobs, cache hits, locking, and failure recovery passed")
 
 

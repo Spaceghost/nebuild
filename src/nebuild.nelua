@@ -4,6 +4,7 @@
 require 'arg'
 require 'hashmap'
 require 'io'
+require 'memory'
 require 'nebuild.sys'
 require 'os'
 require 'sequence'
@@ -53,13 +54,21 @@ local function file_status(path: string, status: *sys.Stat): boolean
 end
 
 local function valid_path(path: string): boolean
-  if #path == 0 or path:sub(-1) == '/' or path:sub(-#stamp_suffix) == stamp_suffix then
-    return false
+  if #path == 0 or path:subview(-#stamp_suffix) == stamp_suffix then return false end
+  local first: usize = path.data[0] == '/'_b and 1 or 0
+  for i: usize = first, #path do
+    if i == #path or path.data[i] == '/'_b then
+      local length = i - first
+      if length == 0 or (path.data[first] == '.'_b and
+          (length == 1 or (length == 2 and path.data[first+1] == '.'_b))) then return false end
+      first = i + 1
+    end
   end
-  local absolute = path:sub(1, 1) == '/'
-  local components = '/' .. path:sub(absolute and 2 or 1) .. '/'
-  return components:find('//', 1, true) == 0 and
-    components:find('/./', 1, true) == 0 and components:find('/../', 1, true) == 0
+  return true
+end
+
+local function manifest_error(path: string, line_number: integer, message: string): void <noreturn>
+  fail(path .. ':' .. tostring(line_number) .. ': ' .. message)
 end
 
 local function read_manifest(path: string)
@@ -67,35 +76,35 @@ local function read_manifest(path: string)
   if not input then fail(path .. ': ' .. reason) end
   local contents = input:read('a')
   if not input:close() then fail('cannot close ' .. path) end
-  if contents:find(string.char(0), 1, true) ~= 0 then fail(path .. ': NUL byte') end
+  if #contents > 0 and memory.scan(contents.data, 0, #contents) ~= nilptr then fail(path .. ': NUL byte') end
 
+  local words: sequence(string)
   local pending: usize = 0
   local line_number = 0
   local offset: isize = 1
   while offset <= (@isize)(#contents) do
-    local newline = contents:find('\n', offset, true)
-    if newline == 0 then newline = (@isize)(#contents) + 1 end
-    local line = contents:sub(offset, newline - 1)
+    local next_line = memory.scan(&contents.data[offset-1], 10, #contents-(@usize)(offset-1))
+    local newline = (@isize)(#contents) + 1
+    if next_line ~= nilptr then newline = (@isize)(next_line) - (@isize)(contents.data) + 1 end
+    local line = contents:subview(offset, newline - 1)
     offset = newline + 1
     line_number = line_number + 1
-    local location = path .. ':' .. tostring(line_number) .. ': '
 
     if pending ~= 0 then
-      if line:sub(1, 1) ~= '\t' or #line <= 1 then fail(location .. 'expected a tab-prefixed command') end
+      if #line <= 1 or line.data[0] ~= '\t'_b then manifest_error(path, line_number, 'expected a tab-prefixed command') end
       local edge = &edges[pending]
-      edge.command = line:sub(2)
-      edge.signature = edge.signature .. '\n' .. edge.command
+      edge.command = line:subview(2)
       pending = 0
-    elseif #line > 0 and line:sub(1, 1) ~= '#' then
-      local words: sequence(string)
+    elseif #line > 0 and line.data[0] ~= '#'_b then
+      words:clear()
       local first: isize = 1
       local length = (@isize)(#line)
       while first <= length do
         local last = first
-        while last <= length and line:byte(last) ~= 32 and line:byte(last) ~= 9 do
+        while last <= length and line.data[last-1] ~= 32 and line.data[last-1] ~= 9 do
           last = last + 1
         end
-        if last > first then words:push(line:sub(first, last - 1)) end
+        if last > first then words:push(line:subview(first, last - 1)) end
         first = last + 1
       end
 
@@ -103,12 +112,14 @@ local function read_manifest(path: string)
         -- Allow blank lines containing spaces.
       elseif (words[1] == 'build' or words[1] == 'default') and #words >= 2 then
         for index: usize = 2, #words do
-          if not valid_path(words[index]) then fail(location .. 'invalid path ' .. words[index]) end
+          if not valid_path(words[index]) then manifest_error(path, line_number, 'invalid path ' .. words[index]) end
+          -- File system calls need a NUL-terminated path.
+          words[index] = words[index]:copy()
         end
         if words[1] == 'build' then
           local output = words[2]
-          if producers[output] ~= 0 then fail(location .. 'duplicate output ' .. output) end
-          if output == path then fail(location .. 'manifest is a build output') end
+          if producers[output] ~= 0 then manifest_error(path, line_number, 'duplicate output ' .. output) end
+          if output == path then manifest_error(path, line_number, 'manifest is a build output') end
           local edge: Edge = {output = output, signature = line}
           for index: usize = 3, #words do edge.inputs:push(words[index]) end
           edges:push(edge)
@@ -118,11 +129,11 @@ local function read_manifest(path: string)
           for index: usize = 2, #words do defaults:push(words[index]) end
         end
       else
-        fail(location .. 'expected build or default')
+        manifest_error(path, line_number, 'expected build or default')
       end
-      words:destroy()
     end
   end
+  words:destroy()
   if pending ~= 0 then fail(path .. ': missing command for ' .. edges[pending].output) end
 end
 
@@ -184,7 +195,7 @@ local function needs_build(edge: *Edge): boolean
   -- Capture the inputs before starting the recipe. A modification while the
   -- command runs will still be visible to the next invocation.
   local signature: stringbuilder
-  signature:write(edge.signature)
+  signature:write(edge.signature, '\n', edge.command)
   for i: usize = 1, #edge.inputs do
     local path = edge.inputs[i]
     if not file_status(path, &info) then fail('missing input ' .. path .. ' for ' .. edge.output) end
@@ -214,7 +225,9 @@ local function launch(edge: *Edge): cint
   io.stdout:flush()
   local pid = sys.fork()
   if pid == 0 then
-    local argv: [4]cstring = {'sh', '-c', (@cstring)(edge.command), nilptr}
+    -- Commands borrow the manifest bytes. Terminate only the recipe we execute.
+    local command = edge.command:copy()
+    local argv: [4]cstring = {'sh', '-c', (@cstring)(command), nilptr}
     sys.execvp('/bin/sh', (@*[0]cstring)(&argv))
     sys._exit(127)
   end
