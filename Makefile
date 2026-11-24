@@ -15,7 +15,7 @@ CFLAGS := -DNELIBC_STANDALONE -nostdlib -static -no-pie -fno-pie \
 	-DNEBUILD_NELIBC_STAMP=$(NELIBC_STAMP)
 LDFLAGS := -Wl,--whole-archive $(NELIBC_LIB) -Wl,--no-whole-archive
 
-.PHONY: all nebuild native test test-native install clean
+.PHONY: all nebuild native test test-native hosted test-hosted install clean
 
 all: nebuild
 
@@ -31,6 +31,14 @@ $(OUT)/nebuild-native: src/nebuild.nelua src/nebuild/sys.nelua Makefile | $(OUT)
 $(OUT)/nebuild: src/nebuild.nelua src/nebuild/sys.nelua Makefile $(NELIBC_LIB) | $(OUT)
 	$(NELUA) -r -L src --cc '$(ZIG) cc $(ZIGFLAGS)' --cflags='$(CFLAGS)' --ldflags='$(LDFLAGS)' -o $@ src/nebuild.nelua
 	@undefined=$$($(NM) -u $@) && test -z "$$undefined" || { echo "undefined symbols:"; $(NM) -u $@; exit 1; }
+
+hosted: $(OUT)/nebuild-hosted
+
+$(OUT)/nebuild-hosted: src/nebuild.nelua src/nebuild/sys.nelua Makefile | $(OUT)
+	$(NELUA) -r -D nebuild_hosted=true -L src --cc '$(CC)' -o $@ src/nebuild.nelua
+
+test-hosted: $(OUT)/nebuild-hosted
+	python3 tests/nebuild.py $(abspath $(OUT)/nebuild-hosted)
 
 $(OUT):
 	mkdir -p $(OUT)

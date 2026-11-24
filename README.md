@@ -1,7 +1,7 @@
 # nebuild
 
 `nebuild` is an incremental build runner for dependency graphs described in a
-`build.ne` manifest. It is written in Nelua and links statically against
+`build.ne` manifest. It is written in Nelua. The default build links statically against
 standalone Nelibc. The runner is useful for small native builds and for
 bootstrapping systems that need to build themselves.
 
@@ -26,6 +26,19 @@ Run the regression suite and install the runner with:
 make test
 sudo make install
 ```
+
+## Build against the host libc
+
+On Linux AArch64 or x86-64, build with Nelua and the system C compiler. Run
+the same regression suite with Python 3.
+
+```sh
+make hosted NELUA=/path/to/nelua CC=gcc
+make test-hosted NELUA=/path/to/nelua CC=gcc
+```
+
+This profile produces `build/nebuild-hosted` and uses the platform's C
+library for file metadata, process management, and directory locking.
 
 ## Build with necc
 

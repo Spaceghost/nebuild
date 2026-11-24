@@ -11,9 +11,6 @@ require 'sequence'
 require 'string'
 require 'stringbuilder'
 
-local SYS_flock: clong <cimport, nodecl, cinclude '<sys/syscall.h>'>
-local function syscall(number: clong, ...: cvarargs): clong <cimport, cinclude '<nelibc_syscall.h>'> end
-
 local stamp_suffix = '.nebuild-command'
 local Edge = @record{
   output: string,
@@ -38,10 +35,10 @@ local function fail(message: string): void <noreturn>
 end
 
 local function lock_build_directory()
-  local fd = sys.open('.', sys.O_RDONLY | sys.O_DIRECTORY, 0)
+  local fd = sys.open_build_directory()
   if fd < 0 then fail('cannot open build directory: ' .. sys.errstr()) end
-  -- Linux LOCK_EX | LOCK_NB. Keep the descriptor open through each recipe.
-  if syscall(SYS_flock, (@clong)(fd), 6_clong, 0_clong, 0_clong, 0_clong, 0_clong) ~= 0 then
+  -- Keep the descriptor open through each recipe.
+  if sys.lock_exclusive(fd) ~= 0 then
     fail('cannot lock build directory: ' .. sys.errstr())
   end
 end

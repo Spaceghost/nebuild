@@ -1,4 +1,4 @@
--- Linux x86-64 interfaces required by the nebuild runner.
+-- Linux interfaces required by the nebuild runner.
 ## pragmas.nogc = true
 
 global sys = @record{}
@@ -8,6 +8,24 @@ global sys.Timespec: type <cimport 'nebuild_timespec', cinclude '<time.h>', node
   tv_nsec: clong,
 }
 
+## if nebuild_hosted then
+-- The hosted C compiler lays out struct stat from the system header.
+global sys.Stat: type <cimport 'nebuild_stat', cinclude '<sys/stat.h>', nodecl, ctypedef 'stat'> = @record{
+  st_dev: culong,
+  st_ino: culong,
+  st_mode: cuint,
+  st_size: clong,
+  st_mtim: sys.Timespec,
+  st_ctim: sys.Timespec,
+}
+
+local O_RDONLY: cint <cimport, nodecl, cinclude '<fcntl.h>'>
+local O_DIRECTORY: cint <cimport, nodecl, cinclude '<fcntl.h>'>
+local LOCK_EX: cint <cimport, nodecl, cinclude '<sys/file.h>'>
+local LOCK_NB: cint <cimport, nodecl, cinclude '<sys/file.h>'>
+local function flock(fd: cint, operation: cint): cint <cimport, cinclude '<sys/file.h>'> end
+local errno: cint <cimport, cinclude '<errno.h>'>
+## else
 global sys.Stat: type <cimport 'nebuild_stat', cinclude '<sys/stat.h>', nodecl, ctypedef 'stat'> = @record{
   st_dev: culong,
   st_ino: culong,
@@ -26,15 +44,32 @@ global sys.Stat: type <cimport 'nebuild_stat', cinclude '<sys/stat.h>', nodecl, 
   __reserved: [3]clong,
 }
 
-global sys.O_RDONLY: cint <comptime> = 0
-global sys.O_DIRECTORY: cint <comptime> = 0x10000
+local O_RDONLY: cint <comptime> = 0
+local O_DIRECTORY: cint <comptime> = 0x10000
+local SYS_flock: clong <cimport, nodecl, cinclude '<sys/syscall.h>'>
+local function syscall(number: clong, ...: cvarargs): clong <cimport, cinclude '<nelibc_syscall.h>'> end
+local function errno_location(): *cint <cimport 'nelibc_errno_location', cinclude '<errno.h>'> end
+## end
 global sys.S_IFMT: cuint <comptime> = 0xF000
 global sys.S_IFREG: cuint <comptime> = 0x8000
 global sys.CLOCK_MONOTONIC: cint <comptime> = 1
 global sys.ENOENT: cint <comptime> = 2
 global sys.EINTR: cint <comptime> = 4
 
-function sys.open(path: cstring, flags: cint, mode: cuint): cint <cimport 'open', cinclude '<fcntl.h>'> end
+local function open(path: cstring, flags: cint, mode: cuint): cint <cimport, cinclude '<fcntl.h>'> end
+
+function sys.open_build_directory(): cint
+  return open('.', O_RDONLY | O_DIRECTORY, 0)
+end
+
+function sys.lock_exclusive(fd: cint): clong
+  ## if nebuild_hosted then
+  return flock(fd, LOCK_EX | LOCK_NB)
+  ## else
+  return syscall(SYS_flock, (@clong)(fd), 6_clong, 0_clong, 0_clong, 0_clong, 0_clong)
+  ## end
+end
+
 function sys.stat(path: cstring, st: *sys.Stat): cint <cimport 'stat', cinclude '<sys/stat.h>'> end
 function sys.unlink(path: cstring): cint <cimport 'unlink', cinclude '<unistd.h>'> end
 function sys.clock_gettime(clk: cint, ts: *sys.Timespec): cint <cimport 'clock_gettime', cinclude '<time.h>'> end
@@ -44,11 +79,14 @@ function sys._exit(code: cint): void <cimport '_exit', cinclude '<unistd.h>', no
 function sys.fork(): cint <cimport 'fork', cinclude '<unistd.h>'> end
 function sys.waitpid(pid: cint, status: *cint, options: cint): cint <cimport 'waitpid', cinclude '<sys/wait.h>'> end
 function sys.getrandom(buf: pointer, n: csize, flags: cuint): clong <cimport 'getrandom', cinclude '<sys/random.h>'> end
-local function errno_location(): *cint <cimport 'nelibc_errno_location', cinclude '<errno.h>'> end
 function sys.strerror(error: cint): cstring <cimport 'strerror', cinclude '<string.h>'> end
 
 function sys.errno(): cint
+  ## if nebuild_hosted then
+  return errno
+  ## else
   return $errno_location()
+  ## end
 end
 
 function sys.errstr(): string
